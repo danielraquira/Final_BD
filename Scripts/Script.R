@@ -1,4 +1,5 @@
 ## Instalamos paquetes ##
+
 rm(list=ls())
 require(pacman)
 p_load(tidyverse, caret, rio, 
@@ -42,6 +43,9 @@ ocupados <- subset(ocupados, INGLABO!=0)
 
 
 ocupados$P6920 <- ifelse(ocupados$P6920 == 2, 1, 0)
+ocupados$P6440 <- ifelse(ocupados$P6440 == 2, 1, 0)
+ocupados$P7040 <- ifelse(ocupados$P7040 == 2, 1, 0)
+ocupados$P7180 <- ifelse(ocupados$P7180 == 2, 1, 0)
 ## hacemos la partición de test y training ##
 set.seed(129)
 split1 <- createDataPartition(ocupados$P6920, p = .7)[[1]]
@@ -53,6 +57,21 @@ training <- ocupados[split1,]
 ## Seguimos con la clasificación ##
 #Las variables que se escogen para la predicción son: Tiene algún tipo de contrato (P6440), ¿El trabajo es ocasional, estacional, permanente u otro? (P6780), Horas trabajadas a la semana (P6800), ¿La semana pasada tuvo segundo trabajo u ocupación? (P7040), ¿Está afiliado a una asociación gremial o sindical? (P7180), Ingresos laborales (INGLABO)
 #Variable a predecir: ¿Cotiza de fondo de pensiones? (P6920)
+
+
+
+## Descriptivas ##
+p_load(skim)
+skim(ocupados)
+var_usadas <- ocupados %>% select(c("P6440", "P6780", "P6800", "P7040", "P7180", "INGLABO", "P6920"))
+skim(var_usadas)
+ggplot(ocupados, aes(x=P6920)) + geom_histogram()
+ggplot(var_usadas, aes(x=P6800)) + geom_density()
+ggplot(var_usadas, aes(x=P6800, y=P6920)) + geom_point()
+ggplot(var_usadas, aes(x=INGLABO, y=P6920)) + geom_point()
+table(ocupados$P6440)
+ggplot(var_usadas, aes(x=INGLABO, y=P7180)) + geom_point()
+
 
 ### Clasificación ###
 ######## Lasso-logit ########
@@ -335,6 +354,45 @@ auc_ridge.down@y.values[[1]] #AUC=0.767
 
 confusionMatrix(as.factor(ridge.down_testing$prediccion_ridge.down),as.factor(ridge.down_testing$P6920)) #Accuracy: 0.862, sensitivity: 0.629, specificity: 0.905
 
+## Seguún los AUC, el modelo que mejor se desempeña es el upsampling de lasso con un AUC de 0.796, un accuracy de 0.849 y una tasa de 11.1% de falsos negativos
+
+## Ahora predecimos con testing ##
+x.test.final <- model.matrix( P6920 ~ P6440 + P6780 + P6800 + P7040 + P7180 + INGLABO, data = testing)
+lasso.predecido.final <- predict(lasso.modelo.up, newx =x.test.final, type="response")
+lasso.predecido.final
+predecir.lasso.final <- ifelse(lasso.predecido.final > 0.5, 1, 0)
+predecir.lasso.final
+
+#Performance del modelo en base final
+lasso.final_testing<-data.frame(testing, predecir.lasso.final)
+lasso.final_testing<-rename(lasso.final_testing, prediccion_lasso.final =s0)
+#se hace para cada id
+pred_mejor.mod<-data.frame(lasso.final_testing$DIRECTORIO,lasso.final_testing$prediccion_lasso.final)
+pred_mejor.mod<-rename(pred_mejor.mod, Prediccion_cotizante = lasso.final_testing.prediccion_lasso.final)
+pred_mejor.mod<-rename(pred_mejor.mod, Persona =lasso.final_testing.DIRECTORIO)
+
+#Se vuelven a mostrar resultados del modelo escogido (upsampling lasso)
+with(lasso.up_testing,prop.table(table(P6920,prediccion_lasso.up))) #6.8% son falsos negativos
+auc_lasso.up <- performance(pred_lasso.up, measure = "auc")
+auc_lasso.up@y.values[[1]] #AUC=0.796
+confusionMatrix(as.factor(lasso.up_testing$prediccion_lasso.up),as.factor(lasso.up_testing$P6920)) #Accuracy: 0.849, sensitivity: 0.719, specificity: 0.872
+
+#Coeficientes del modelo final
+lasso.final_coefs <- coef(lasso.modelo.up) %>% as.matrix() %>% as_tibble(rownames = "predictor") %>% rename(coeficiente = s0) 
+lasso.final_coefs
+
+#Gráfica coeficientes
+lasso.final_coefs %>%
+  filter(predictor != "(Intercept)") %>%
+  ggplot(aes(x = predictor, y = coeficiente)) + geom_col() + labs(title = "Coeficientes del modelo Lasso upsampling") + theme_bw() + theme(axis.text.x = element_text(size = 6, angle = 45))
+
+#Grafica predicción con modelo final
+library(scales)
+ggplot(pred_mejor.mod, aes(x = as.factor(Prediccion_cotizante))) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  geom_text(aes(y = ((..count..)/sum(..count..)), label = scales::percent((..count..)/sum(..count..))), stat = "count", vjust = -0.25) +
+  scale_y_continuous(labels = percent) +
+  labs(title = "Predicción cotizante a pensión", y = "Percent", x = "Cotiza")
 
 
 
